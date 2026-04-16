@@ -13,6 +13,7 @@ local util = require("util")
 local annotations = require("annotations")
 local gdrive_sync = require("gdrive_sync")
 local gdrive_utils = require("utils")
+local progress = require("progress")
 
 local GDrive = WidgetContainer:extend{
     name = "gdrive",
@@ -30,6 +31,7 @@ GDrive.default_settings = {
     download_dir = "/mnt/onboard/downloads",
     sync_folder_id = "",
     auto_sync = true,        -- auto sync on book open/close
+    sync_progress = true,    -- auto push/pull reading progress
     sync_vocabulary = true,  -- include vocabulary in auto sync
 }
 
@@ -55,6 +57,8 @@ function GDrive:addToMainMenu(menu_items)
         sub_item_table = {
             { text = _("Browse"), callback = function() self.history = {}; self:browse() end },
             { text = _("Sync"), callback = function() self:sync(true) end },
+            { text = _("Push Progress"), callback = function() self:pushProgress(true) end },
+            { text = _("Pull Progress"), callback = function() self:pullProgress(true) end },
             { text = _("Sync Vocabulary"), callback = function() self:smartSyncVocabulary(true) end },
             {
                 text = _("Settings"),
@@ -64,6 +68,14 @@ function GDrive:addToMainMenu(menu_items)
                         checked_func = function() return self.settings.auto_sync end,
                         callback = function()
                             self.settings.auto_sync = not self.settings.auto_sync
+                            self:save()
+                        end,
+                    },
+                    {
+                        text = _("Auto-sync progress"),
+                        checked_func = function() return self.settings.sync_progress end,
+                        callback = function()
+                            self.settings.sync_progress = not self.settings.sync_progress
                             self:save()
                         end,
                     },
@@ -195,6 +207,9 @@ function GDrive:onReaderReady()
     if self.settings.client_id == "" or self.settings.refresh_token == "" then return end
     UIManager:scheduleIn(3, function()
         self:sync(false)
+        if self.settings.sync_progress then
+            self:pullProgress(false)
+        end
         if self.settings.sync_vocabulary then
             self:smartSyncVocabulary(false)
         end
@@ -206,6 +221,9 @@ function GDrive:onCloseDocument()
     if not self.settings.auto_sync then return end
     if self.settings.client_id == "" or self.settings.refresh_token == "" then return end
     self:sync(false)
+    if self.settings.sync_progress then
+        self:pushProgress(false)
+    end
     if self.settings.sync_vocabulary then
         self:smartSyncVocabulary(false)
     end
@@ -240,7 +258,7 @@ function GDrive:sync(interactive)
     end
 
     local annotation_filename = book_hash .. ".json"
-    local json_path = annotations.write_annotations_json(document, stored_annotations, sdr_dir, annotation_filename)
+    local json_path = annotations.write_annotations_json(document, stored_annotations, sdr_dir, annotation_filename, self.ui)
     if not json_path then
         if interactive then UIManager:show(InfoMessage:new{ text = _("Failed to write annotations JSON.") }) end
         return
@@ -278,6 +296,51 @@ function GDrive:sync(interactive)
                     UIManager:show(InfoMessage:new{ text = _("Sync failed."), timeout = 3 })
                 end
             end
+        end)
+    end)
+end
+
+--- Push current reading progress to GDrive
+function GDrive:pushProgress(interactive)
+    local document = self.ui and self.ui.document
+    local file = document and document.file
+    if not file then return end
+
+    local book_hash = util.partialMD5(file)
+    if not book_hash then return end
+
+    local widget = self
+    self:getAccessToken(function(token)
+        self:getSyncFolder(token, function(folder_id)
+            local ok_net, network = pcall(require, "network")
+            if not ok_net then return end
+            local ok = progress.push(widget, network, token, folder_id, book_hash, interactive)
+            if interactive then
+                if ok then
+                    UIManager:show(InfoMessage:new{ text = _("Progress pushed."), timeout = 3 })
+                else
+                    UIManager:show(InfoMessage:new{ text = _("Push progress failed."), timeout = 3 })
+                end
+            end
+        end)
+    end)
+end
+
+--- Pull reading progress from GDrive and navigate
+function GDrive:pullProgress(interactive)
+    local document = self.ui and self.ui.document
+    local file = document and document.file
+    if not file then return end
+
+    local book_hash = util.partialMD5(file)
+    if not book_hash then return end
+
+    local widget = self
+    self:getAccessToken(function(token)
+        self:getSyncFolder(token, function(folder_id)
+            local ok_net, network = pcall(require, "network")
+            if not ok_net then return end
+            progress.pull(widget, network, token, folder_id, book_hash, interactive)
         end)
     end)
 end

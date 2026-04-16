@@ -22,7 +22,7 @@ function M.flush_metadata(document)
     end
 end
 
-function M.write_annotations_json(document, stored_annotations, sdr_dir, annotation_filename)
+function M.write_annotations_json(document, stored_annotations, sdr_dir, annotation_filename, ui)
     if not document or not sdr_dir then
         return false
     end
@@ -124,6 +124,7 @@ end
 function M.get_deleted_annotations(local_map, cached_map, document)
     if type(cached_map) == "table" and type(local_map) == "table" then
         for cached_k, cached_v in pairs(cached_map) do
+            if cached_k ~= "__progress__" then
             local found = false
             for _, local_v in pairs(local_map) do
                 if positions_intersect(cached_v, local_v, document) then
@@ -134,6 +135,7 @@ function M.get_deleted_annotations(local_map, cached_map, document)
             if not found then
                 cached_v.deleted = true
                 local_map[cached_k] = cached_v
+            end
             end
         end
     end
@@ -170,12 +172,12 @@ function M.sync_callback(widget, local_file, cached_file, income_file)
     end
 
     for k, v in pairs(income_map) do
-        if resolve_intersections(merged, v) then
+        if k ~= "__progress__" and resolve_intersections(merged, v) then
             merged[k] = v
         end
     end
     for k, v in pairs(local_map) do
-        if resolve_intersections(merged, v) then
+        if k ~= "__progress__" and resolve_intersections(merged, v) then
             merged[k] = v
         end
     end
