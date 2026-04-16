@@ -516,25 +516,16 @@ end
 function GDrive:download(file)
     local clean_name = file.name:gsub("[\\/]", "_")
     local dest_path = self.settings.download_dir .. "/" .. clean_name
-    local flag_path = dest_path .. ".done"
     UIManager:show(InfoMessage:new{ text = "Downloading...", timeout = 2 })
     self:getAccessToken(function(token)
         local ok, network = pcall(require, "network")
         if not ok then return end
-        network.downloadFile(token, file.id, dest_path)
-        local poll_count = 0
-        local function check_done()
-            local f = io.open(flag_path, "r")
-            if f then
-                f:close()
-                os.remove(flag_path)
-                UIManager:show(InfoMessage:new{ text = "Finished: " .. file.name, timeout = 5 })
-            elseif poll_count < 120 then
-                poll_count = poll_count + 1
-                UIManager:scheduleIn(5, check_done)
-            end
+        local dl_ok = network.downloadFileSync(token, file.id, dest_path)
+        if dl_ok then
+            UIManager:show(InfoMessage:new{ text = "Finished: " .. file.name, timeout = 5 })
+        else
+            UIManager:show(InfoMessage:new{ text = "Download failed: " .. file.name, timeout = 5 })
         end
-        UIManager:scheduleIn(5, check_done)
     end)
 end
 

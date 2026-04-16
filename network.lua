@@ -88,58 +88,61 @@ function M.listFiles(access_token, folder_id)
 end
 
 function M.uploadFile(access_token, local_path, name, parent_id)
-    local url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+    local f = io.open(local_path, "rb")
+    if not f then return false end
+    local file_content = f:read("*a")
+    f:close()
+    if not file_content then return false end
+
     local metadata = {
         name = name,
         parents = parent_id and {parent_id} or nil
     }
     local meta_json = json.encode(metadata)
-    
-    local ok, DataStorage = pcall(require, "datastorage")
-    local tmp_res = ok and (DataStorage:getDataDir() .. "/gdrive_upload_res.json") or "gdrive_upload_res.json"
-    
-    -- Use a simpler multipart upload command
-    local cmd = string.format(
-        'curl -s -k -L -X POST -H "Authorization: Bearer %s" ' ..
-        '-F "metadata=%s;type=application/json;charset=UTF-8" ' ..
-        '-F "file=@%s" "%s" > "%s" 2>&1',
-        access_token, meta_json:gsub('"', '\\"'), local_path, url, tmp_res
-    )
-    
-    os.execute(cmd)
-    
-    local f = io.open(tmp_res, "r")
-    if f then
-        local res = f:read("*a")
-        f:close()
-        local ok_dec, data = pcall(json.decode, res or "")
-        return ok_dec and data and data.id ~= nil
-    end
-    return false
+    local boundary = "gdrive_boundary_" .. tostring(os.time())
+    local body = "--" .. boundary .. "\r\n"
+        .. "Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        .. meta_json .. "\r\n"
+        .. "--" .. boundary .. "\r\n"
+        .. "Content-Type: application/octet-stream\r\n\r\n"
+        .. file_content .. "\r\n"
+        .. "--" .. boundary .. "--"
+
+    local url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+    local res_body, code = M.request({
+        url = url,
+        method = "POST",
+        headers = {
+            ["Authorization"] = "Bearer " .. access_token,
+            ["Content-Type"] = "multipart/related; boundary=" .. boundary,
+        },
+        body = body,
+    })
+
+    local ok, data = pcall(json.decode, res_body or "")
+    return ok and data and data.id ~= nil
 end
 
 function M.updateFile(access_token, file_id, local_path)
-    local url = string.format("https://www.googleapis.com/upload/drive/v3/files/%s?uploadType=media", file_id)
-    local ok, DataStorage = pcall(require, "datastorage")
-    local tmp_res = ok and (DataStorage:getDataDir() .. "/gdrive_update_res.json") or "gdrive_update_res.json"
+    local f = io.open(local_path, "rb")
+    if not f then return false end
+    local file_content = f:read("*a")
+    f:close()
+    if not file_content then return false end
 
-    local cmd = string.format(
-        'curl -s -k -L -X PATCH -H "Authorization: Bearer %s" ' ..
-        '-H "Content-Type: application/octet-stream" ' ..
-        '--data-binary "@%s" "%s" > "%s" 2>&1',
-        access_token, local_path, url, tmp_res
-    )
-    
-    os.execute(cmd)
-    
-    local f = io.open(tmp_res, "r")
-    if f then
-        local res = f:read("*a")
-        f:close()
-        local ok_dec, data = pcall(json.decode, res or "")
-        return ok_dec and data and data.id ~= nil
-    end
-    return false
+    local url = string.format("https://www.googleapis.com/upload/drive/v3/files/%s?uploadType=media", file_id)
+    local res_body, code = M.request({
+        url = url,
+        method = "PATCH",
+        headers = {
+            ["Authorization"] = "Bearer " .. access_token,
+            ["Content-Type"] = "application/octet-stream",
+        },
+        body = file_content,
+    })
+
+    local ok, data = pcall(json.decode, res_body or "")
+    return ok and data and data.id ~= nil
 end
 
 function M.createFolder(access_token, name, parent_id)
@@ -163,14 +166,6 @@ function M.createFolder(access_token, name, parent_id)
     local ok, data = pcall(json.decode, res_body or "")
     if ok and data and data.id then return data.id end
     return nil
-end
-
-function M.downloadFile(access_token, file_id, dest_path)
-    local url = string.format("https://www.googleapis.com/drive/v3/files/%s?alt=media", file_id)
-    local cmd = string.format('(curl -s -L -k -H "Authorization: Bearer %s" "%s" -o "%s" && touch "%s.done") &', 
-        access_token, url, dest_path, dest_path)
-    os.execute(cmd)
-    return true
 end
 
 function M.downloadFileSync(access_token, file_id, dest_path)
